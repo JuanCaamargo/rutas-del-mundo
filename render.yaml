@@ -2,6 +2,7 @@ services:
   - type: web
     name: rutas-del-mundo
     runtime: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn backend.wsgi:app --bind 0.0.0.0:$PORT --workers 1 --threads 4
     healthCheckPath: /
