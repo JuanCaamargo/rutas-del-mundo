@@ -76,8 +76,13 @@ $("form-login").addEventListener("submit", async (e) => {
   e.preventDefault();
   try { entrar(await post("/auth/login", { correo: $("l-correo").value, clave: $("l-clave").value })); } catch (err) { mensaje("l-msg", err.message); }
 });
-$("demo-asesor").addEventListener("click", () => { $("l-correo").value = "asesor@rutasdelmundo.co"; $("l-clave").value = "asesor123"; $("form-login").requestSubmit(); });
-$("demo-admin").addEventListener("click", () => { $("l-correo").value = "admin@rutasdelmundo.co"; $("l-clave").value = "admin123"; $("form-login").requestSubmit(); });
+function prepararIngresoDemo(correo) {
+  $("l-correo").value = correo;
+  $("l-clave").value = "";
+  $("l-clave").focus();
+}
+$("demo-asesor").addEventListener("click", () => prepararIngresoDemo("asesor@rutasdelmundo.co"));
+$("demo-admin").addEventListener("click", () => prepararIngresoDemo("admin@rutasdelmundo.co"));
 $("demo-viajero").addEventListener("click", async () => entrar(await post("/auth/explorar")));
 $("salir").addEventListener("click", async () => { await post("/auth/salir"); location.reload(); });
 

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: rutas-del-mundo
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn backend.wsgi:app --bind 0.0.0.0:$PORT --workers 1 --threads 4
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: RDM_SECRET
+        generateValue: true
+      - key: RDM_ADMIN_PASSWORD
+        sync: false
+      - key: RDM_ADVISOR_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

@@ -15,6 +15,7 @@ os.environ.pop("GEMINI_API_KEY", None)
 os.environ["RDM_TARIFA_NOCHE"] = "90"
 
 import app as rdm  # noqa: E402
+import db  # noqa: E402
 import ia_service  # noqa: E402
 
 ADMIN = {"correo": "admin@rutasdelmundo.co", "clave": "admin123"}
@@ -60,6 +61,25 @@ class Base(unittest.TestCase):
     def plan_borrador(self, **extra):
         pid = self.generar(**extra).get_json()["id"]
         return self.asesor.post(f"/api/propuestas/{pid}/plan").get_json()
+
+
+class TestAdaptadorPostgres(unittest.TestCase):
+    def test_esquema_postgres_no_conserva_sintaxis_sqlite(self):
+        self.assertNotIn("AUTOINCREMENT", db.ESQUEMA_POSTGRES)
+        self.assertNotIn("COLLATE NOCASE", db.ESQUEMA_POSTGRES)
+        self.assertNotIn("datetime('now')", db.ESQUEMA_POSTGRES)
+        self.assertIn("SERIAL PRIMARY KEY", db.ESQUEMA_POSTGRES)
+        self.assertIn("DEFAULT (CURRENT_TIMESTAMP::text)", db.ESQUEMA_POSTGRES)
+
+    def test_consultas_postgres_conservan_busquedas_insensibles_a_mayusculas(self):
+        self.assertEqual(
+            db._postgres_sql("SELECT id FROM usuario WHERE correo = ?"),
+            "SELECT id FROM usuario WHERE lower(correo) = lower(%s)",
+        )
+        self.assertEqual(
+            db._postgres_sql("UPDATE destino SET pais = ? WHERE id = ?"),
+            "UPDATE destino SET pais = %s WHERE id = %s",
+        )
 
 
 class TestSesion(Base):  # HU-01

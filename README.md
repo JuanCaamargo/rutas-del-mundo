@@ -23,9 +23,21 @@ Abre **http://localhost:5000**. La base de datos (`backend/rutas.db`, SQLite) se
 alojamientos, vuelos y **3 planes de ejemplo** (con fechas de salida). Si ya tenías una base de una versión anterior, se
 actualiza sola al arrancar.
 
-Pruebas: `python -m unittest discover -s tests -v` (33 pruebas, cubren las 26 historias).
+Pruebas: `python -m unittest discover -s tests -v` (37 pruebas).
 
-**Cuentas de demostración** (también hay botones en la pantalla de inicio):
+## Desplegar en Render con Supabase
+
+El proyecto conserva SQLite para desarrollo local y usa PostgreSQL cuando existe `DATABASE_URL`.
+`render.yaml` configura el servicio web, el comando de inicio y las variables que deben cargarse en Render.
+
+1. Crea un proyecto en Supabase y copia la URL PostgreSQL de **Connect**. Para Render usa el *Session pooler* si la conexión directa no está disponible en IPv4; mantén el SSL incluido en la URL.
+2. Sube este repositorio a GitHub y en Render crea un **Blueprint** seleccionando ese repositorio y aceptando `render.yaml`.
+3. En las variables del servicio completa `DATABASE_URL` con la URL de Supabase, `RDM_ADMIN_PASSWORD` y `RDM_ADVISOR_PASSWORD` con contraseñas propias. Render genera `RDM_SECRET`; `GEMINI_API_KEY` es opcional.
+4. Render instala las dependencias, inicializa el esquema PostgreSQL y carga los datos de demostración al primer inicio. Las cuentas de demostración usan las contraseñas configuradas en esas variables.
+
+No publiques la URL de Supabase ni la guardes en el repositorio. La inicialización no copia automáticamente el contenido de `backend/rutas.db`; la base PostgreSQL nueva recibe el esquema y los datos de demostración.
+
+**Cuentas de demostración locales** (los botones de asesor y administrador rellenan el correo; en Render escribe la contraseña configurada como variable de entorno):
 
 | Rol | Correo | Contraseña |
 |---|---|---|

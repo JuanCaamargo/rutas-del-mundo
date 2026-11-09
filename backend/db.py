@@ -4,11 +4,13 @@ Tablas (salen del diagrama de clases): destino, actividad y propuesta_ia.
 """
 import json
 import os
+import re
 import sqlite3
 
 from werkzeug.security import generate_password_hash
 
 DB_PATH = os.environ.get("RDM_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rutas.db"))
+DATABASE_URL = os.environ.get("DATABASE_URL")
 CONTINENTES = ["América", "Europa", "Asia", "África", "Oceanía"]
 CATEGORIAS = ["cultura", "gastronomia", "historia", "playa", "naturaleza", "aventura"]
 ORIGENES = ["Medellín (MDE)", "Bogotá (BOG)", "Cali (CLO)", "Cartagena (CTG)", "Barranquilla (BAQ)"]
@@ -112,6 +114,12 @@ CREATE TABLE IF NOT EXISTS salida_plan (
     UNIQUE (plan_id, fecha)
 );
 """
+ESQUEMA_POSTGRES = (
+    ESQUEMA
+    .replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    .replace(" COLLATE NOCASE", "")
+    .replace("DEFAULT (datetime('now'))", "DEFAULT (CURRENT_TIMESTAMP::text)")
+)
 
 # Columnas agregadas en sprints posteriores: se añaden a bases creadas con versiones anteriores.
 COLUMNAS_NUEVAS = [
@@ -176,16 +184,33 @@ USUARIOS_DEMO = [("Juan Chaverra", "admin@rutasdelmundo.co", "admin123", "admini
 
 
 def conectar():
+    if DATABASE_URL:
+        import psycopg
+
+        return psycopg.connect(DATABASE_URL, connect_timeout=10, sslmode="require", prepare_threshold=None)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def _postgres_sql(sql):
+    sql = sql.replace("WHERE pais = ?", "WHERE lower(pais) = lower(?)")
+    sql = sql.replace("WHERE correo = ?", "WHERE lower(correo) = lower(?)")
+    return sql.replace("?", "%s")
+
+
 def consultar(sql, args=(), uno=False):
     conn = conectar()
     try:
-        filas = [dict(f) for f in conn.execute(sql, args).fetchall()]
+        if DATABASE_URL:
+            from psycopg.rows import dict_row
+
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(_postgres_sql(sql), args)
+                filas = [dict(f) for f in cur.fetchall()]
+        else:
+            filas = [dict(f) for f in conn.execute(sql, args).fetchall()]
     finally:
         conn.close()
     return (filas[0] if filas else None) if uno else filas
@@ -194,14 +219,86 @@ def consultar(sql, args=(), uno=False):
 def ejecutar(sql, args=()):
     conn = conectar()
     try:
-        cur = conn.execute(sql, args)
+        if DATABASE_URL:
+            insertar = sql.lstrip().upper().startswith("INSERT")
+            consulta = sql.rstrip().rstrip(";")
+            if insertar and not re.search(r"\bRETURNING\b", consulta, re.IGNORECASE):
+                consulta += " RETURNING id"
+            with conn.cursor() as cur:
+                cur.execute(_postgres_sql(consulta), args)
+                nuevo_id = cur.fetchone()[0] if insertar else None
+        else:
+            cur = conn.execute(sql, args)
+            nuevo_id = cur.lastrowid
         conn.commit()
-        return cur.lastrowid
+        return nuevo_id
+    finally:
+        conn.close()
+
+
+def _iniciar_postgres():
+    conn = conectar()
+    try:
+        with conn.cursor() as cur:
+            for sentencia in ESQUEMA_POSTGRES.split(";"):
+                if sentencia.strip():
+                    cur.execute(sentencia)
+            for tabla, col, ddl in COLUMNAS_NUEVAS:
+                cur.execute(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {ddl}")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS usuario_correo_lower_unique ON usuario (lower(correo))")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS destino_pais_lower_unique ON destino (lower(pais))")
+            cur.execute("SELECT COUNT(*) FROM usuario")
+            if cur.fetchone()[0] == 0:
+                usuarios = []
+                for nombre, correo, clave, rol in USUARIOS_DEMO:
+                    variable = "RDM_ADMIN_PASSWORD" if rol == "administrador" else "RDM_ADVISOR_PASSWORD"
+                    usuarios.append((nombre, correo, os.environ.get(variable, clave), rol))
+                cur.executemany(
+                    _postgres_sql("INSERT INTO usuario (nombre, correo, clave_hash, rol) VALUES (?,?,?,?)"),
+                    [(n, c, generate_password_hash(p), r) for n, c, p, r in usuarios],
+                )
+            cur.execute("SELECT COUNT(*) FROM destino")
+            if cur.fetchone()[0] == 0:
+                for (pais, cont, ciudades), acts in SEMILLA.items():
+                    cur.execute(
+                        _postgres_sql("INSERT INTO destino (pais, continente, ciudades) VALUES (?,?,?) RETURNING id"),
+                        (pais, cont, json.dumps(list(ciudades), ensure_ascii=False)),
+                    )
+                    did = cur.fetchone()[0]
+                    cur.executemany(
+                        _postgres_sql("INSERT INTO actividad (destino_id, nombre, ciudad, categoria, costo) VALUES (?,?,?,?,?)"),
+                        [(did, nombre, ciudad, categoria, costo) for ciudad, nombre, categoria, costo in acts],
+                    )
+            cur.execute("SELECT COUNT(*) FROM alojamiento")
+            if cur.fetchone()[0] == 0:
+                for pais, items in ALOJAMIENTOS_SEMILLA.items():
+                    cur.execute(_postgres_sql("SELECT id FROM destino WHERE pais = ?"), (pais,))
+                    destino = cur.fetchone()
+                    if destino:
+                        cur.executemany(
+                            _postgres_sql("INSERT INTO alojamiento (destino_id, ciudad, nombre, categoria, tarifa_noche) VALUES (?,?,?,?,?)"),
+                            [(destino[0], ciudad, nombre, categoria, tarifa) for ciudad, nombre, categoria, tarifa in items],
+                        )
+            cur.execute("SELECT COUNT(*) FROM vuelo")
+            if cur.fetchone()[0] == 0:
+                for pais, items in VUELOS_SEMILLA.items():
+                    cur.execute(_postgres_sql("SELECT id FROM destino WHERE pais = ?"), (pais,))
+                    destino = cur.fetchone()
+                    if destino:
+                        cur.executemany(
+                            _postgres_sql("""INSERT INTO vuelo (destino_id, origen, aerolinea, tarifa, escalas, hora_ida, hora_regreso)
+                                             VALUES (?,?,?,?,?,?,?)"""),
+                            [(destino[0],) + vuelo for vuelo in items],
+                        )
+        conn.commit()
     finally:
         conn.close()
 
 
 def iniciar():
+    if DATABASE_URL:
+        _iniciar_postgres()
+        return
     conn = conectar()
     try:
         conn.executescript(ESQUEMA)

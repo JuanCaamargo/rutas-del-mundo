@@ -37,7 +37,11 @@ from ia_service import ErrorIA, SimuladoServicio, normalizar, normalizar_recomen
 
 app = Flask(__name__, static_folder=os.path.join(RAIZ, "frontend"), static_url_path="")
 app.secret_key = os.environ.get("RDM_SECRET", "clave-de-desarrollo-cambiala")
-app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True)
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=bool(os.environ.get("DATABASE_URL")),
+)
 TIPOS_VIAJERO = ["solo", "pareja", "familia", "amigos"]
 CORREO = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ORDENES = {"precio": ("precio_persona", False), "precio_desc": ("precio_persona", True), "noches": ("noches", False), "nombre": ("nombre", False)}
