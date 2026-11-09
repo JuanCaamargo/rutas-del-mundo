@@ -1,4 +1,4 @@
 flask>=3.0
 requests>=2.31
 gunicorn>=23,<24
-psycopg[binary]>=3.2,<4
+psycopg[binary,pool]>=3.2,<4

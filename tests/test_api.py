@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(BASE, "backend"))
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ["RDM_DB"] = _tmp.name
+os.environ["DATABASE_URL"] = ""
 os.environ.pop("GEMINI_API_KEY", None)
 os.environ["RDM_TARIFA_NOCHE"] = "90"
 
@@ -246,6 +247,13 @@ class TestViajero(Base):  # HU-19, 21, 22, 25 y HU-18
         pid = self.plan_borrador()["id"]
         self.asesor.post(f"/api/planes/{pid}/publicar")
         return pid
+
+    def test_catalogo_carga_datos_relacionados_en_lotes(self):
+        for ruta in ("/api/catalogo", "/api/catalogo/planes"):
+            with self.subTest(ruta=ruta), mock.patch.object(rdm.db, "consultar", wraps=rdm.db.consultar) as consultar:
+                respuesta = self.viajero.get(ruta)
+            self.assertEqual(respuesta.status_code, 200)
+            self.assertEqual(consultar.call_count, 6)
 
     def test_catalogo_ficha_y_borrador_oculto(self):
         pid = self.publicado()

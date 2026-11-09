@@ -321,32 +321,39 @@ def crear_vuelo(did):
 
 
 # ---------- precios (HU-04, 09, 11, 23, 24) ----------
-def _actividades_por_id(did):
+def _actividades_por_id(did, contexto=None):
+    if contexto is not None:
+        return contexto["actividades"].get(did, {})
     return {a["id"]: a for a in db.consultar("SELECT * FROM actividad WHERE destino_id = ?", (did,))}
 
 
-def _tarifas(did, elegidos=None):
+def _tarifas(did, elegidos=None, contexto=None):
     """Alojamiento por ciudad: el elegido por el asesor o, por defecto, el más económico."""
     elegidos = elegidos or {}
     por_ciudad = {}
-    for a in db.consultar("SELECT * FROM alojamiento WHERE destino_id = ? ORDER BY tarifa_noche, id", (did,)):
+    alojamientos = (contexto["alojamientos"].get(did, []) if contexto is not None else
+                    db.consultar("SELECT * FROM alojamiento WHERE destino_id = ? ORDER BY tarifa_noche, id", (did,)))
+    for a in alojamientos:
         por_ciudad.setdefault(a["ciudad"], []).append(a)
     info = {c: next((a for a in lst if a["id"] == elegidos.get(c)), lst[0]) for c, lst in por_ciudad.items()}
     return {c: a["tarifa_noche"] for c, a in info.items()}, info
 
 
-def _vuelo(did, origen):
-    v = db.consultar("SELECT * FROM vuelo WHERE destino_id = ? AND origen = ? ORDER BY tarifa LIMIT 1", (did, origen), uno=True)
+def _vuelo(did, origen, contexto=None):
+    if contexto is None:
+        v = db.consultar("SELECT * FROM vuelo WHERE destino_id = ? AND origen = ? ORDER BY tarifa LIMIT 1", (did, origen), uno=True)
+    else:
+        v = next((v for v in contexto["vuelos"].get(did, []) if v["origen"] == origen), None)
     return {k: v[k] for k in ("origen", "aerolinea", "tarifa", "escalas", "hora_ida", "hora_regreso", "equipaje")} if v else None
 
 
-def _calcular_precio(did, noches, dias_raw, elegidos, origen, habitacion="doble", viajeros=1):
-    acts = _actividades_por_id(did)
-    tarifas, info = _tarifas(did, elegidos)
+def _calcular_precio(did, noches, dias_raw, elegidos, origen, habitacion="doble", viajeros=1, contexto=None):
+    acts = _actividades_por_id(did, contexto)
+    tarifas, info = _tarifas(did, elegidos, contexto)
     doble = costos.hospedaje(noches, dias_raw, tarifas)
     hospedaje = round(doble * costos.FACTORES_HABITACION[habitacion], 2)
     actividades = round(sum(acts[i]["costo"] for i in {i for d in dias_raw for i in d["actividad_ids"]} if i in acts), 2)
-    vuelo = _vuelo(did, origen)
+    vuelo = _vuelo(did, origen, contexto)
     vuelo_pp = vuelo["tarifa"] if vuelo else 0.0
     pp = round(hospedaje + actividades + vuelo_pp, 2)
     return {"origen": origen, "habitacion": habitacion, "viajeros": viajeros, "hospedaje_pp": hospedaje, "actividades_pp": actividades,
@@ -470,7 +477,10 @@ def marcar_revisada(pid):
 
 
 # ---------- HU-15 / 07 / 12 / 16 / 17 planes del asesor ----------
-def _salidas(plan_id, futuras=True):
+def _salidas(plan_id, futuras=True, contexto=None):
+    if contexto is not None:
+        filas = contexto["salidas"].get(plan_id, [])
+        return [f for f in filas if f["fecha"] >= date.today().isoformat()] if futuras else filas
     filas = db.consultar("""SELECT s.id, s.fecha, s.cupos, s.cupos - COALESCE((SELECT SUM(r.viajeros) FROM solicitud_reserva r
                             WHERE r.salida_id = s.id AND r.estado != 'CANCELADA'), 0) AS disponibles
                             FROM salida_plan s WHERE s.plan_id = ? ORDER BY s.fecha""", (plan_id,))
@@ -672,14 +682,65 @@ def _publicados(did=None):
     return db.consultar(sql + (" AND p.destino_id = ?" if did else "") + " ORDER BY p.id", (did,) if did else ())
 
 
+def _contexto_planes(rows):
+    """Carga de una vez los datos usados para valorar una lista de planes."""
+    destino_ids = sorted({row["destino_id"] for row in rows})
+    plan_ids = sorted({row["id"] for row in rows})
+    contexto = {"destinos": {}, "actividades": {}, "alojamientos": {}, "vuelos": {}, "salidas": {}}
+    if not destino_ids:
+        return contexto
+
+    placeholders_destinos = ",".join("?" for _ in destino_ids)
+    contexto["destinos"] = {
+        row["id"]: row for row in db.consultar(
+            f"SELECT id, pais, continente, ciudades FROM destino WHERE id IN ({placeholders_destinos})",
+            destino_ids,
+        )
+    }
+    for tabla, clave, destino_clave in (
+        ("actividad", "actividades", "destino_id"),
+        ("alojamiento", "alojamientos", "destino_id"),
+        ("vuelo", "vuelos", "destino_id"),
+    ):
+        filas = db.consultar(
+            f"SELECT * FROM {tabla} WHERE {destino_clave} IN ({placeholders_destinos})"
+            + (" ORDER BY tarifa_noche, id" if tabla == "alojamiento" else " ORDER BY tarifa, id" if tabla == "vuelo" else ""),
+            destino_ids,
+        )
+        for fila in filas:
+            if clave == "actividades":
+                contexto[clave].setdefault(fila["destino_id"], {})[fila["id"]] = fila
+            else:
+                contexto[clave].setdefault(fila["destino_id"], []).append(fila)
+
+    if plan_ids:
+        placeholders_planes = ",".join("?" for _ in plan_ids)
+        filas = db.consultar(
+            f"""SELECT s.id, s.plan_id, s.fecha, s.cupos,
+                       s.cupos - COALESCE((
+                           SELECT SUM(r.viajeros) FROM solicitud_reserva r
+                           WHERE r.salida_id = s.id AND r.estado != 'CANCELADA'
+                       ), 0) AS disponibles
+                FROM salida_plan s WHERE s.plan_id IN ({placeholders_planes}) ORDER BY s.fecha""",
+            plan_ids,
+        )
+        for fila in filas:
+            contexto["salidas"].setdefault(fila["plan_id"], []).append(
+                {clave: valor for clave, valor in fila.items() if clave != "plan_id"}
+            )
+    return contexto
+
+
 def _origen_arg():
     return en_lista(request.args.get("origen") or db.ORIGEN_BASE, "El origen", db.ORIGENES)
 
 
-def _resumen(row, origen, viajeros=1, habitacion="doble"):
+def _resumen(row, origen, viajeros=1, habitacion="doble", contexto=None):
     raw = json.loads(row["itinerario"])
-    precio = _calcular_precio(row["destino_id"], row["noches"], raw, json.loads(row["alojamientos"]), origen, habitacion, viajeros)
-    salidas = _salidas(row["id"])
+    precio = _calcular_precio(
+        row["destino_id"], row["noches"], raw, json.loads(row["alojamientos"]), origen, habitacion, viajeros, contexto
+    )
+    salidas = _salidas(row["id"], contexto=contexto)
     return {"id": row["id"], "nombre": row["nombre"], "descripcion": row["descripcion"], "noches": row["noches"],
             "destino_id": row["destino_id"], "ciudades": list(dict.fromkeys(d["ciudad"] for d in raw)), "origen": origen,
             "precio_persona": precio["precio_persona"], "total": precio["total"], "vuelo_incluido": precio["vuelo_incluido"],
@@ -690,15 +751,18 @@ def _resumen(row, origen, viajeros=1, habitacion="doble"):
 def catalogo():
     origen = _origen_arg()
     destinos = {}
-    for row in _publicados():
+    planes = _publicados()
+    contexto = _contexto_planes(planes)
+    for row in planes:
         d = destinos.setdefault(row["destino_id"], {"n": 0, "min": None})
-        precio = _resumen(row, origen)["precio_persona"]
+        precio = _resumen(row, origen, contexto=contexto)["precio_persona"]
         d["n"] += 1
         d["min"] = precio if d["min"] is None else min(d["min"], precio)
     out = []
     for did, info in destinos.items():
-        dest = _obtener_destino(did)
-        out.append({"id": did, "pais": dest["pais"], "continente": dest["continente"], "ciudades": dest["ciudades"],
+        dest = contexto["destinos"][did]
+        out.append({"id": did, "pais": dest["pais"], "continente": dest["continente"],
+                    "ciudades": json.loads(dest["ciudades"]),
                     "n_planes": info["n"], "precio_desde": info["min"], "origen": origen})
     return jsonify(sorted(out, key=lambda x: (x["continente"], x["pais"])))
 
@@ -709,8 +773,12 @@ def planes_publicados(did):
     if not destino["activo"]:
         raise ErrorHttp("Destino no encontrado", 404)
     origen = _origen_arg()
+    planes = _publicados(did)
+    contexto = _contexto_planes(planes)
     return jsonify({"destino": {"id": did, "pais": destino["pais"]},
-                    "planes": sorted((_resumen(r, origen) for r in _publicados(did)), key=lambda p: p["precio_persona"])})
+                    "planes": sorted(
+                        (_resumen(r, origen, contexto=contexto) for r in planes), key=lambda p: p["precio_persona"]
+                    )})
 
 
 @app.get("/api/catalogo/planes")
@@ -726,10 +794,12 @@ def buscar_planes():
     orden = request.args.get("orden", "precio")
     if orden not in ORDENES:
         raise ValidacionError("El orden debe ser uno de: " + ", ".join(ORDENES))
+    planes = _publicados(did)
+    contexto = _contexto_planes(planes)
     res = []
-    for row in _publicados(did):
-        r = _resumen(row, origen, viajeros)
-        r["pais"] = _obtener_destino(row["destino_id"])["pais"]
+    for row in planes:
+        r = _resumen(row, origen, viajeros, contexto=contexto)
+        r["pais"] = contexto["destinos"][row["destino_id"]]["pais"]
         if (pmin is not None and r["precio_persona"] < pmin) or (pmax is not None and r["precio_persona"] > pmax):
             continue
         if (nmin is not None and r["noches"] < nmin) or (nmax is not None and r["noches"] > nmax):
@@ -757,10 +827,12 @@ def recomendar_catalogo():
     consulta = texto(d.get("consulta"), "Describe el viaje que buscas", 500)
     origen = en_lista(d.get("origen", db.ORIGEN_BASE), "El origen", db.ORIGENES)
     viajeros = numero(d.get("viajeros", 1), "Los viajeros", 1, 10, entero=True)
+    filas = _publicados()
+    contexto = _contexto_planes(filas)
     planes = []
-    for row in _publicados():
-        plan = _resumen(row, origen, viajeros)
-        plan["pais"] = _obtener_destino(row["destino_id"])["pais"]
+    for row in filas:
+        plan = _resumen(row, origen, viajeros, contexto=contexto)
+        plan["pais"] = contexto["destinos"][row["destino_id"]]["pais"]
         planes.append(plan)
     if not planes:
         return jsonify({"recomendaciones": [], "fuente": "catalogo"})

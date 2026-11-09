@@ -11,6 +11,7 @@ from werkzeug.security import generate_password_hash
 
 DB_PATH = os.environ.get("RDM_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rutas.db"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
+_POOL_POSTGRES = None
 CONTINENTES = ["América", "Europa", "Asia", "África", "Oceanía"]
 CATEGORIAS = ["cultura", "gastronomia", "historia", "playa", "naturaleza", "aventura"]
 ORIGENES = ["Medellín (MDE)", "Bogotá (BOG)", "Cali (CLO)", "Cartagena (CTG)", "Barranquilla (BAQ)"]
@@ -184,14 +185,27 @@ USUARIOS_DEMO = [("Juan Chaverra", "admin@rutasdelmundo.co", "admin123", "admini
 
 
 def conectar():
-    if DATABASE_URL:
-        import psycopg
-
-        return psycopg.connect(DATABASE_URL, connect_timeout=10, sslmode="require", prepare_threshold=None)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def _pool_postgres():
+    global _POOL_POSTGRES
+    if _POOL_POSTGRES is None:
+        from psycopg_pool import ConnectionPool
+
+        _POOL_POSTGRES = ConnectionPool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=4,
+            timeout=10,
+            kwargs={"connect_timeout": 10, "sslmode": "require", "prepare_threshold": None},
+            open=True,
+        )
+        _POOL_POSTGRES.wait(timeout=10)
+    return _POOL_POSTGRES
 
 
 def _postgres_sql(sql):
@@ -206,44 +220,45 @@ def _sentencias_esquema_postgres():
 
 
 def consultar(sql, args=(), uno=False):
-    conn = conectar()
-    try:
-        if DATABASE_URL:
-            from psycopg.rows import dict_row
+    if DATABASE_URL:
+        from psycopg.rows import dict_row
 
+        with _pool_postgres().connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(_postgres_sql(sql), args)
                 filas = [dict(f) for f in cur.fetchall()]
-        else:
+    else:
+        conn = conectar()
+        try:
             filas = [dict(f) for f in conn.execute(sql, args).fetchall()]
-    finally:
-        conn.close()
+        finally:
+            conn.close()
     return (filas[0] if filas else None) if uno else filas
 
 
 def ejecutar(sql, args=()):
-    conn = conectar()
-    try:
-        if DATABASE_URL:
-            insertar = sql.lstrip().upper().startswith("INSERT")
-            consulta = sql.rstrip().rstrip(";")
-            if insertar and not re.search(r"\bRETURNING\b", consulta, re.IGNORECASE):
-                consulta += " RETURNING id"
+    if DATABASE_URL:
+        insertar = sql.lstrip().upper().startswith("INSERT")
+        consulta = sql.rstrip().rstrip(";")
+        if insertar and not re.search(r"\bRETURNING\b", consulta, re.IGNORECASE):
+            consulta += " RETURNING id"
+        with _pool_postgres().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(_postgres_sql(consulta), args)
                 nuevo_id = cur.fetchone()[0] if insertar else None
-        else:
-            cur = conn.execute(sql, args)
-            nuevo_id = cur.lastrowid
-        conn.commit()
+            conn.commit()
         return nuevo_id
+    conn = conectar()
+    try:
+        cur = conn.execute(sql, args)
+        conn.commit()
+        return cur.lastrowid
     finally:
         conn.close()
 
 
 def _iniciar_postgres():
-    conn = conectar()
-    try:
+    with _pool_postgres().connection() as conn:
         with conn.cursor() as cur:
             for sentencia in _sentencias_esquema_postgres():
                 cur.execute(sentencia)
@@ -295,8 +310,6 @@ def _iniciar_postgres():
                             [(destino[0],) + vuelo for vuelo in items],
                         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def iniciar():
