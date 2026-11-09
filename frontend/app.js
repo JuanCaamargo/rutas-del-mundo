@@ -20,11 +20,49 @@ const $ = (id) => document.getElementById(id);
 const estado = { usuario: null, origenes: [], habitaciones: [], destinos: [], destinoSel: null, tipo: "pareja", intereses: new Set(["cultura"]),
   propuesta: null, alternativas: [], plan: null, opcionesAloj: [], catalogoPlan: [], planPublico: null, destinoPublico: null, resultados: null, paisesPorDestino: {} };
 
+const CACHE_CATALOGO_MS = 15_000;
+const cacheCatalogo = new Map();
+let versionCacheCatalogo = 0;
+
 async function api(ruta, opciones = {}) {
-  const r = await fetch("/api" + ruta, { headers: { "Content-Type": "application/json" }, ...opciones });
-  const datos = await r.json().catch(() => ({}));
-  if (!r.ok) { const e = new Error(datos.error || "Error inesperado (" + r.status + ")"); e.datos = datos; e.status = r.status; throw e; }
-  return datos;
+  const metodo = (opciones.method || "GET").toUpperCase();
+  const cacheable = metodo === "GET" && /^\/catalogo(?:\?|\/destinos\/\d+\/planes(?:\?|$)|\/planes(?:\?|$))/.test(ruta);
+  const cambiaCatalogo = metodo !== "GET"
+    && (/^\/(?:destinos|planes|propuestas)(?:\/|$)/.test(ruta) || /^\/catalogo\/planes\/\d+\/solicitudes(?:\?|$)/.test(ruta));
+  if (cambiaCatalogo) {
+    versionCacheCatalogo += 1;
+    cacheCatalogo.clear();
+  }
+
+  if (cacheable) {
+    const guardado = cacheCatalogo.get(ruta);
+    if (guardado && (guardado.promesa || guardado.expira > Date.now())) {
+      return guardado.promesa || guardado.datos;
+    }
+  }
+
+  const version = versionCacheCatalogo;
+  const cargar = async () => {
+    const r = await fetch("/api" + ruta, { headers: { "Content-Type": "application/json" }, ...opciones });
+    const datos = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(datos.error || "Error inesperado (" + r.status + ")"); e.datos = datos; e.status = r.status; throw e; }
+    return datos;
+  };
+
+  if (!cacheable) return cargar();
+
+  const entrada = { promesa: cargar(), datos: null, expira: 0 };
+  cacheCatalogo.set(ruta, entrada);
+  try {
+    entrada.datos = await entrada.promesa;
+    entrada.promesa = null;
+    entrada.expira = Date.now() + CACHE_CATALOGO_MS;
+    if (cacheCatalogo.get(ruta) === entrada && version !== versionCacheCatalogo) cacheCatalogo.delete(ruta);
+    return entrada.datos;
+  } catch (err) {
+    if (cacheCatalogo.get(ruta) === entrada) cacheCatalogo.delete(ruta);
+    throw err;
+  }
 }
 const post = (ruta, cuerpo = {}) => api(ruta, { method: "POST", body: JSON.stringify(cuerpo) });
 const put = (ruta, cuerpo) => api(ruta, { method: "PUT", body: JSON.stringify(cuerpo) });

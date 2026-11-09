@@ -82,7 +82,7 @@ que el plan gratuito siga vigente. Para WhatsApp define `RDM_WHATSAPP` (número 
 
 | Capa | Archivos | Qué hace |
 |---|---|---|
-| Front | `frontend/` | Una sola página (HTML, CSS y JS sin framework) con menú según el rol. |
+| Front | `frontend/` | Una sola página (HTML, CSS y JS sin framework) con menú según el rol; las lecturas del catálogo se conservan en memoria por 15 segundos y se invalidan al modificar datos. |
 | Back | `backend/app.py` | API REST con Flask, validaciones y permisos por rol; sirve también el front. |
 | BD | `backend/db.py` | SQLite: `usuario`, `destino`, `actividad`, `alojamiento`, `vuelo`, `propuesta_ia`, `plan_turistico`, `salida_plan`, `solicitud_reserva`. |
 | IA | `backend/ia_service.py` | `ServicioIA` (interfaz), `GeminiServicio`, `SimuladoServicio` y validación de la salida. |
