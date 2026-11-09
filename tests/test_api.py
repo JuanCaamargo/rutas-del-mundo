@@ -81,6 +81,12 @@ class TestAdaptadorPostgres(unittest.TestCase):
             "UPDATE destino SET pais = %s WHERE id = %s",
         )
 
+    def test_esquema_postgres_no_se_separa_en_punto_y_coma_de_comentario(self):
+        sentencias = db._sentencias_esquema_postgres()
+        self.assertEqual(len(sentencias), 9)
+        self.assertTrue(all(sentencia.startswith("CREATE TABLE IF NOT EXISTS") for sentencia in sentencias))
+        self.assertIn("costo_estimado REAL NOT NULL", sentencias[4])
+
 
 class TestSesion(Base):  # HU-01
     def test_login_correcto_e_incorrecto(self):

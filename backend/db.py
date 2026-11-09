@@ -200,6 +200,11 @@ def _postgres_sql(sql):
     return sql.replace("?", "%s")
 
 
+def _sentencias_esquema_postgres():
+    esquema = re.sub(r"--[^\r\n]*", "", ESQUEMA_POSTGRES)
+    return [sentencia.strip() for sentencia in esquema.split(";") if sentencia.strip()]
+
+
 def consultar(sql, args=(), uno=False):
     conn = conectar()
     try:
@@ -240,9 +245,8 @@ def _iniciar_postgres():
     conn = conectar()
     try:
         with conn.cursor() as cur:
-            for sentencia in ESQUEMA_POSTGRES.split(";"):
-                if sentencia.strip():
-                    cur.execute(sentencia)
+            for sentencia in _sentencias_esquema_postgres():
+                cur.execute(sentencia)
             for tabla, col, ddl in COLUMNAS_NUEVAS:
                 cur.execute(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {ddl}")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS usuario_correo_lower_unique ON usuario (lower(correo))")
