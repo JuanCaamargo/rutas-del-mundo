@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(BASE, "backend"))
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ["RDM_DB"] = _tmp.name
+os.environ["RDM_DB_MODE"] = "sqlite"
 os.environ["DATABASE_URL"] = ""
 os.environ.pop("GEMINI_API_KEY", None)
 os.environ["RDM_TARIFA_NOCHE"] = "90"

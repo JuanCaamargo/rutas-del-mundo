@@ -40,7 +40,7 @@ app.secret_key = os.environ.get("RDM_SECRET", "clave-de-desarrollo-cambiala")
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=bool(os.environ.get("DATABASE_URL")),
+    SESSION_COOKIE_SECURE=os.environ.get("RDM_DB_MODE", "sqlite").strip().lower() == "postgres",
 )
 TIPOS_VIAJERO = ["solo", "pareja", "familia", "amigos"]
 CORREO = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

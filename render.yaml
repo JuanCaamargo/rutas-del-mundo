@@ -9,6 +9,8 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: RDM_DB_MODE
+        value: postgres
       - key: RDM_SECRET
         generateValue: true
       - key: RDM_ADMIN_PASSWORD

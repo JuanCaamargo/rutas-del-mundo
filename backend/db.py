@@ -10,7 +10,12 @@ import sqlite3
 from werkzeug.security import generate_password_hash
 
 DB_PATH = os.environ.get("RDM_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rutas.db"))
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DB_MODE = os.environ.get("RDM_DB_MODE", "sqlite").strip().lower()
+if DB_MODE not in {"sqlite", "postgres"}:
+    raise RuntimeError("RDM_DB_MODE debe ser 'sqlite' o 'postgres'")
+DATABASE_URL = os.environ.get("DATABASE_URL") if DB_MODE == "postgres" else None
+if DB_MODE == "postgres" and not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL es obligatoria cuando RDM_DB_MODE=postgres")
 _POOL_POSTGRES = None
 CONTINENTES = ["América", "Europa", "Asia", "África", "Oceanía"]
 CATEGORIAS = ["cultura", "gastronomia", "historia", "playa", "naturaleza", "aventura"]

@@ -27,7 +27,7 @@ Pruebas: `python -m unittest discover -s tests -v` (37 pruebas).
 
 ## Desplegar en Render con Supabase
 
-El proyecto conserva SQLite para desarrollo local y usa PostgreSQL cuando existe `DATABASE_URL`.
+El proyecto usa SQLite por defecto para desarrollo local. Render define `RDM_DB_MODE=postgres` y conecta PostgreSQL mediante `DATABASE_URL`.
 `render.yaml` configura el servicio web, el comando de inicio y las variables que deben cargarse en Render.
 
 1. Crea un proyecto en Supabase y copia la URL PostgreSQL de **Connect**. Para Render usa el *Session pooler* si la conexión directa no está disponible en IPv4; mantén el SSL incluido en la URL.
